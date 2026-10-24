@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Enterprise Web Scraper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <style>
+    /* ===== DESIGN TOKENS ===== */
+    :root {
+      --bg:        #0d0f14;
+      --surface:   #141720;
+      --surface2:  #1c2030;
+      --border:    #252a3a;
+      --accent:    #6c63ff;
+      --accent2:   #00d4ff;
+      --success:   #00e676;
+      --warn:      #ffd740;
+      --danger:    #ff5252;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --font:      'Inter', sans-serif;
+      --mono:      'JetBrains Mono', monospace;
+    }
+
+    /* ===== RESET & BASE ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ===== ANIMATED GRID BACKGROUND ===== */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: -1;
+      background-image:
+        linear-gradient(rgba(108,99,255,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(108,99,255,.04) 1px, transparent 1px);
+      background-size: 40px 40px;
+      animation: gridShift 20s linear infinite;
+    }
+    @keyframes gridShift { to { background-position: 40px 40px; } }
+
+    /* ===== GLOW ORBS ===== */
+    .orb {
+      position: fixed; border-radius: 50%; filter: blur(120px); z-index: -1;
+      animation: float 8s ease-in-out infinite;
+    }
+    .orb-1 { width: 500px; height: 500px; background: rgba(108,99,255,.15); top: -100px; left: -100px; }
+    .orb-2 { width: 400px; height: 400px; background: rgba(0,212,255,.12); bottom: -80px; right: -80px; animation-delay: -4s; }
+    @keyframes float { 0%,100%{ transform: translateY(0) scale(1); } 50%{ transform: translateY(-30px) scale(1.05); } }
+
+    /* ===== LAYOUT ===== */
+    .wrapper { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+    /* ===== HEADER ===== */
+    header {
+      display: flex; align-items: center; gap: 1rem;
+      padding: 1.5rem 0 2.5rem;
+    }
+    .logo {
+      width: 48px; height: 48px; border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem; box-shadow: 0 0 20px rgba(108,99,255,.4);
+    }
+    .header-text h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -.02em; }
+    .header-text p { color: var(--muted); font-size: .85rem; margin-top: .2rem; }
+    .badge {
+      margin-left: auto;
+      padding: .3rem .75rem; border-radius: 20px; font-size: .75rem; font-weight: 600;
+      background: rgba(0,230,118,.12); color: var(--success);
+      border: 1px solid rgba(0,230,118,.25);
+      display: flex; align-items: center; gap: .4rem;
+    }
+    .badge-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{ opacity:1; } 50%{ opacity:.3; } }
+
+    /* ===== CARDS ===== */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      backdrop-filter: blur(12px);
+      transition: border-color .3s;
+    }
+    .card:hover { border-color: rgba(108,99,255,.35); }
+    .card-title {
+      font-size: .8rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .1em; color: var(--muted); margin-bottom: 1.25rem;
+      display: flex; align-items: center; gap: .5rem;
+    }
+    .card-title-icon { color: var(--accent); font-size: 1rem; }
+
+    /* ===== GRID LAYOUT ===== */
+    .main-grid { display: grid; grid-template-columns: 1fr 1.5fr; gap: 1.5rem; align-items: start; }
+    @media (max-width: 720px) { .main-grid { grid-template-columns: 1fr; } }
+
+    /* ===== FORM ===== */
+    .form-group { margin-bottom: 1.1rem; }
+    label {
+      display: block; font-size: .78rem; font-weight: 500;
+      color: var(--muted); margin-bottom: .45rem; letter-spacing: .03em;
+    }
+    input[type="number"], input[type="text"] {
+      width: 100%; padding: .65rem 1rem;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; color: var(--text); font-family: var(--mono);
+      font-size: .9rem; transition: border-color .2s, box-shadow .2s; outline: none;
+    }
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(108,99,255,.2);
+    }
+    input::placeholder { color: var(--muted); }
+
+    /* ===== BUTTONS ===== */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: .55rem;
+      padding: .75rem 1.5rem; border-radius: 10px; border: none;
+      font-family: var(--font); font-size: .9rem; font-weight: 600;
+      cursor: pointer; transition: all .2s; width: 100%; letter-spacing: .01em;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #8b5cf6);
+      color: #fff; box-shadow: 0 4px 20px rgba(108,99,255,.35);
+    }
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-2px); box-shadow: 0 6px 28px rgba(108,99,255,.5);
+    }
+    .btn-primary:active:not(:disabled) { transform: translateY(0); }
+    .btn-primary:disabled {
+      background: linear-gradient(135deg, #4b4b6e, #5b4a7e);
+      cursor: not-allowed; opacity: .55; box-shadow: none;
+    }
+    .btn-download {
+      background: linear-gradient(135deg, #00e676, #00b0ff);
+      color: #0d0f14; box-shadow: 0 4px 20px rgba(0,230,118,.3);
+      margin-top: .85rem;
+    }
+    .btn-download:hover:not(:disabled) {
+      transform: translateY(-2px); box-shadow: 0 6px 28px rgba(0,230,118,.45);
+    }
+    .btn-download:disabled {
+      background: var(--surface2); color: var(--muted);
+      cursor: not-allowed; box-shadow: none;
+    }
+
+    /* ===== SPINNER ===== */
+    .spinner {
+      width: 16px; height: 16px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      animation: spin .7s linear infinite; display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ===== STATUS BAR ===== */
+    .status-bar {
+      display: flex; align-items: center; gap: .75rem;
+      padding: .75rem 1rem; border-radius: 10px; margin-top: 1rem;
+      background: var(--surface2); border: 1px solid var(--border);
+      font-size: .82rem; min-height: 42px;
+      transition: all .3s;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .status-idle   .status-dot { background: var(--muted); }
+    .status-run    .status-dot { background: var(--warn); animation: pulse 1s infinite; }
+    .status-done   .status-dot { background: var(--success); }
+    .status-error  .status-dot { background: var(--danger); }
+
+    /* ===== TERMINAL / LOG BOX ===== */
+    .terminal-header {
+      display: flex; align-items: center; gap: .5rem;
+      margin-bottom: 1rem; padding-bottom: .75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dots { display: flex; gap: .4rem; }
+    .terminal-dots span {
+      width: 11px; height: 11px; border-radius: 50%;
+    }
+    .td-red   { background: #ff5f57; }
+    .td-yellow{ background: #febc2e; }
+    .td-green { background: #28c840; }
+    .terminal-title { font-size: .8rem; color: var(--muted); margin-left: .5rem; }
+    .ws-indicator {
+      margin-left: auto; font-size: .72rem; font-weight: 600;
+      padding: .2rem .6rem; border-radius: 20px;
+      background: rgba(255,87,87,.15); color: var(--danger);
+      border: 1px solid rgba(255,87,87,.25);
+      transition: all .3s;
+    }
+    .ws-indicator.connected {
+      background: rgba(0,230,118,.12); color: var(--success);
+      border-color: rgba(0,230,118,.25);
+    }
+
+    #log-box {
+      background: #080a0f;
+      border-radius: 10px; border: 1px solid #1e2436;
+      height: 360px; overflow-y: auto; padding: 1rem;
+      font-family: var(--mono); font-size: .8rem; line-height: 1.7;
+      color: #a0aec0;
+      scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+    }
+    #log-box::-webkit-scrollbar { width: 5px; }
+    #log-box::-webkit-scrollbar-track { background: transparent; }
+    #log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .log-line { display: flex; gap: .6rem; align-items: flex-start; margin-bottom: .15rem; }
+    .log-time { color: #374151; flex-shrink: 0; font-size: .72rem; padding-top: .1rem; }
+    .log-text  { flex: 1; word-break: break-word; }
+
+    /* Tag color classes */
+    .tag-net    { color: #60a5fa; }
+    .tag-ok     { color: #34d399; }
+    .tag-db     { color: #a78bfa; }
+    .tag-warn   { color: #fbbf24; }
+    .tag-err    { color: #f87171; }
+    .tag-sys    { color: #6ee7b7; font-style: italic; }
+    .tag-done   { color: var(--success); font-weight: 700; }
+
+    /* ===== STATS ROW ===== */
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: .75rem; margin-top: 1.25rem;
+    }
+    .stat-card {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: .85rem 1rem; text-align: center;
+    }
+    .stat-value { font-size: 1.4rem; font-weight: 700; font-family: var(--mono); }
+    .stat-label { font-size: .72rem; color: var(--muted); margin-top: .2rem; }
+    .stat-val-accent  { color: var(--accent2); }
+    .stat-val-success { color: var(--success); }
+    .stat-val-warn    { color: var(--warn); }
+
+    /* ===== PROGRESS BAR ===== */
+    .progress-wrap {
+      margin-top: 1rem; background: var(--surface2);
+      border-radius: 6px; height: 6px; overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .progress-bar {
+      height: 100%; width: 0%; border-radius: 6px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width .4s ease;
+    }
+    .progress-bar.indeterminate {
+      width: 40%; animation: indeterminate 1.5s ease-in-out infinite;
+    }
+    @keyframes indeterminate {
+      0%   { margin-left: -40%; }
+      100% { margin-left: 100%; }
+    }
+
+    /* ===== FOOTER ===== */
+    footer { text-align: center; color: var(--muted); font-size: .75rem; padding-top: 3rem; }
+    footer span { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+
+  <div class="wrapper">
+    <!-- HEADER -->
+    <header>
+      <div class="logo">⚡</div>
+      <div class="header-text">
+        <h1>Enterprise Web Scraper</h1>
+        <p>Асинхронный движок · Playwright · SQLite · Excel</p>
+      </div>
+      <div class="badge" id="server-badge">
+        <span class="badge-dot"></span>
+        <span>Онлайн</span>
+      </div>
+    </header>
+
+    <!-- STATS -->
+    <div class="stats-grid" style="margin-bottom:1.5rem">
+      <div class="stat-card">
+        <div class="stat-value stat-val-accent" id="stat-pages">—</div>
+        <div class="stat-label">Страниц в задаче</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value stat-val-success" id="stat-items">—</div>
+        <div class="stat-label">Записей собрано</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value stat-val-warn" id="stat-time">—</div>
+        <div class="stat-label">Время выполнения</div>
+      </div>
+    </div>
+
+    <!-- MAIN GRID -->
+    <div class="main-grid">
+
+      <!-- LEFT: CONTROL PANEL -->
+      <div>
+        <div class="card">
+          <div class="card-title">
+            <span class="card-title-icon">⚙️</span> Параметры запуска
+          </div>
+
+          <div class="form-group">
+            <label for="inp-pages">Количество страниц</label>
+            <input type="number" id="inp-pages" value="3" min="1" max="50" placeholder="3"/>
+          </div>
+          <div class="form-group">
+            <label for="inp-concurrency">Параллелизм (вкладки)</label>
+            <input type="number" id="inp-concurrency" value="3" min="1" max="10" placeholder="3"/>
+          </div>
+          <div class="form-group">
+            <label for="inp-output">Имя Excel-файла</label>
+            <input type="text" id="inp-output" value="catalog_report.xlsx" placeholder="catalog_report.xlsx"/>
+          </div>
+          <div class="form-group">
+            <label for="inp-db">SQLite БД (пусто = без БД)</label>
+            <input type="text" id="inp-db" value="scraped_data.db" placeholder="scraped_data.db"/>
+          </div>
+
+          <button class="btn btn-primary" id="btn-run" onclick="startScraping()">
+            <div class="spinner" id="spinner"></div>
+            <span id="btn-text">▶ Запустить скрапинг</span>
+          </button>
+
+          <button class="btn btn-download" id="btn-download" disabled onclick="downloadReport()">
+            ⬇ Скачать Excel-отчёт
+          </button>
+
+          <!-- STATUS -->
+          <div class="status-bar status-idle" id="status-bar">
+            <div class="status-dot"></div>
+            <span id="status-text">Ожидание запуска</span>
+          </div>
+
+          <!-- PROGRESS -->
+          <div class="progress-wrap">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: TERMINAL -->
+      <div>
+        <div class="card">
+          <div class="terminal-header">
+            <div class="terminal-dots">
+              <span class="td-red"></span>
+              <span class="td-yellow"></span>
+              <span class="td-green"></span>
+            </div>
+            <span class="terminal-title">scraper.log — реальное время</span>
+            <div class="ws-indicator" id="ws-indicator">⬤ WS отключен</div>
+          </div>
+          <div id="log-box">
+            <div class="log-line">
+              <span class="log-time">--:--:--</span>
+              <span class="log-text tag-sys">Готов к работе. Заполните параметры и нажмите ▶ Запустить.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Enterprise Web Scraper &nbsp;·&nbsp; Powered by <span>FastAPI</span> + <span>Playwright</span> + <span>OpenPyXL</span>
+    </footer>
+  </div>
+
+  <script>
+    /* ===== STATE ===== */
+    let ws = null;
+    let taskRunning = false;
+    let startTime = null;
+    let timerInterval = null;
+    let itemsCollected = 0;
+
+    /* ===== WebSocket ===== */
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/ws/logs`);
+
+      ws.onopen = () => {
+        setWsStatus(true);
+        addLog('WebSocket соединение установлено', 'sys');
+      };
+
+      ws.onmessage = (evt) => {
+        let data;
+        try { data = JSON.parse(evt.data); } catch { return; }
+
+        if (data.type === 'ping') return;
+
+        if (data.type === 'log') {
+          const text = data.text;
+
+          if (text === '__DONE__') {
+            onTaskDone();
+            return;
+          }
+
+          const cls = classifyLog(text);
+          addLog(text, cls);
+
+          // Считаем записи из лога
+          const m = text.match(/Собрано:\s*(\d+)/);
+          if (m) {
+            itemsCollected += parseInt(m[1], 10);
+            document.getElementById('stat-items').textContent = itemsCollected;
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        setWsStatus(false);
+        // Реконнект через 2 сек если задача ещё идёт
+        if (taskRunning) setTimeout(connectWS, 2000);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+
+    function setWsStatus(connected) {
+      const el = document.getElementById('ws-indicator');
+      if (connected) {
+        el.textContent = '⬤ WS подключен';
+        el.classList.add('connected');
+      } else {
+        el.textContent = '⬤ WS отключен';
+        el.classList.remove('connected');
+      }
+    }
+
+    /* ===== LOG CLASSIFIER ===== */
+    function classifyLog(text) {
+      const t = text.toLowerCase();
+      if (t.includes('[сеть]') || t.includes('[net]'))   return 'net';
+      if (t.includes('[успех]') || t.includes('готов'))   return 'ok';
+      if (t.includes('[бд]') || t.includes('sqlite'))     return 'db';
+      if (t.includes('[ошибка]') || t.includes('[сбой]')) return 'err';
+      if (t.includes('[предупреждение]') || t.includes('[валидация]')) return 'warn';
+      if (t.includes('задача завершена') || t.includes('завершено')) return 'done';
+      if (t.includes('старт') || t.includes('запуск'))   return 'sys';
+      return '';
+    }
+
+    /* ===== LOG BOX ===== */
+    function addLog(text, cls) {
+      const box = document.getElementById('log-box');
+      const now = new Date();
+      const ts  = now.toLocaleTimeString('ru-RU', { hour12: false });
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      line.innerHTML = `<span class="log-time">${ts}</span><span class="log-text tag-${cls}">${escHtml(text)}</span>`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function escHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function clearLog() {
+      document.getElementById('log-box').innerHTML = '';
+    }
+
+    /* ===== TIMER ===== */
+    function startTimer() {
+      startTime = Date.now();
+      timerInterval = setInterval(() => {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        document.getElementById('stat-time').textContent = elapsed + 's';
+      }, 200);
+    }
+
+    function stopTimer() {
+      clearInterval(timerInterval);
+    }
+
+    /* ===== UI HELPERS ===== */
+    function setStatus(cls, text) {
+      const bar = document.getElementById('status-bar');
+      bar.className = 'status-bar ' + cls;
+      document.getElementById('status-text').textContent = text;
+    }
+
+    function setRunning(running) {
+      taskRunning = running;
+      const btn    = document.getElementById('btn-run');
+      const spinner= document.getElementById('spinner');
+      const btnTxt = document.getElementById('btn-text');
+      const prog   = document.getElementById('progress-bar');
+
+      if (running) {
+        btn.disabled = true;
+        spinner.style.display = 'block';
+        btnTxt.textContent = 'Выполняется...';
+        prog.classList.add('indeterminate');
+      } else {
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        btnTxt.textContent = '▶ Запустить скрапинг';
+        prog.classList.remove('indeterminate');
+      }
+    }
+
+    /* ===== START SCRAPING ===== */
+    async function startScraping() {
+      const pages       = parseInt(document.getElementById('inp-pages').value) || 3;
+      const concurrency = parseInt(document.getElementById('inp-concurrency').value) || 3;
+      const output      = document.getElementById('inp-output').value.trim() || 'catalog_report.xlsx';
+      const db          = document.getElementById('inp-db').value.trim();
+
+      // Update stats
+      document.getElementById('stat-pages').textContent = pages;
+      document.getElementById('stat-items').textContent = '0';
+      document.getElementById('stat-time').textContent  = '0s';
+      itemsCollected = 0;
+
+      // Reset download button
+      document.getElementById('btn-download').disabled = true;
+
+      clearLog();
+      setRunning(true);
+      setStatus('status-run', 'Запуск скрапера...');
+      startTimer();
+
+      // Connect WS first
+      if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+
+      // Call API
+      try {
+        const resp = await fetch('/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pages, concurrency, output, db })
+        });
+        const data = await resp.json();
+
+        if (data.status === 'already_running') {
+          addLog('Задача уже выполняется!', 'warn');
+          setStatus('status-run', 'Уже выполняется');
+        } else {
+          addLog(`Задача принята сервером: ${data.message}`, 'sys');
+          setStatus('status-run', 'Скрапинг в процессе...');
+        }
+      } catch (err) {
+        addLog(`Ошибка связи с сервером: ${err}`, 'err');
+        setRunning(false);
+        stopTimer();
+        setStatus('status-error', 'Ошибка соединения');
+      }
+    }
+
+    /* ===== TASK DONE ===== */
+    function onTaskDone() {
+      setRunning(false);
+      stopTimer();
+      setStatus('status-done', 'Задача завершена успешно');
+      addLog('─────────── Сессия завершена ───────────', 'done');
+      document.getElementById('progress-bar').style.width = '100%';
+
+      // Enable download
+      checkDownloadReady();
+    }
+
+    async function checkDownloadReady() {
+      try {
+        const resp = await fetch('/api/status');
+        const data = await resp.json();
+        if (data.ready) {
+          document.getElementById('btn-download').disabled = false;
+          addLog('Excel-файл готов к скачиванию ↓', 'ok');
+        }
+      } catch {}
+    }
+
+    /* ===== DOWNLOAD ===== */
+    function downloadReport() {
+      window.location.href = '/api/download';
+    }
+
+    /* ===== INIT ===== */
+    window.addEventListener('load', () => {
+      connectWS();
+      // Poll status on load to restore state
+      fetch('/api/status').then(r => r.json()).then(data => {
+        if (data.running) {
+          setRunning(true);
+          setStatus('status-run', 'Задача уже выполняется');
+          startTimer();
+        }
+        if (data.ready) {
+          document.getElementById('btn-download').disabled = false;
+        }
+      });
+    });
+  </script>
+</body>
+</html>
