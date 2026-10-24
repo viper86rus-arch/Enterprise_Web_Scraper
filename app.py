@@ -56,8 +56,6 @@ class WebSocketLogger(io.TextIOBase):
 
     def write(self, text: str) -> int:
         clean = _ANSI_ESCAPE.sub("", text)
-        # Убираем Rich-теги типа [cyan], [bold red], etc.
-        clean = re.sub(r"\[/?[^\]]*\]", "", clean)
         clean = clean.strip()
         if clean:
             try:
@@ -92,7 +90,7 @@ def _make_ws_console(queue: asyncio.Queue) -> Console:
 class ScrapeRequest(BaseModel):
     pages: int = 3
     concurrency: int = 3
-    output: str = "catalog_report.xlsx"
+    output: str = "demo_catalog.xlsx"
     db: str = "scraped_data.db"
 
 
