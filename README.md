@@ -161,11 +161,14 @@ class WebSocketLogger(io.TextIOBase):
     """Перенаправляет print/stdout в asyncio-очередь для трансляции в WS."""
     def __init__(self, queue: asyncio.Queue): ...
     def write(self, text: str) -> int:
-        clean = _ANSI_ESCAPE.sub("", text)          # убираем ANSI escape-коды
-        clean = re.sub(r"\[/?[^\]]*\]", "", clean)  # убираем Rich-теги [cyan], [bold], ...
-        if clean.strip():
+        clean = text.strip()
+        if clean:
             loop.call_soon_threadsafe(self._queue.put_nowait, clean)
 ```
+
+Rich Console создаётся с `markup=True` и нестандартным `file`-объектом (`WebSocketLogger`). В этом режиме Rich **не добавляет** ANSI escape-последовательностей и **сам снимает** теги разметки (`[cyan]`, `[bold]` и т.д.) до того, как строка попадает в `write()` — поэтому дополнительная очистка не нужна.
+
+Цветовое оформление в браузере обеспечивает **фронтенд**: функция `classifyLog()` анализирует ключевые слова (`[СЕТЬ]`, `[УСПЕХ]`, `[ОШИБКА]` и т.д.) и назначает CSS-классы (`tag-net`, `tag-ok`, `tag-err` ...) с нужными цветами.
 
 На время сессии `_main_module.console` заменяется на `Console(file=WebSocketLogger(queue))`:
 ```python
