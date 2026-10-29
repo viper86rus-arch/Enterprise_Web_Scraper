@@ -8,7 +8,7 @@
 - Неблокирующий фоновый запуск ScrapingEngine
 - Автоматическое скачивание сгенерированных отчетов Excel
 
-Автор: viper86rus-arch (@V1PER86RUS)
+Автор: V1PER (viper86rus-arch)
 Лицензия: MIT
 """
 

@@ -355,5 +355,5 @@ await engine.run(total_pages=10)
 
 ## 📄 Лицензия и авторство
 
-* **Автор разработки:** Максим Братанов ([`viper86rus-arch`](https://github.com/viper86rus-arch) / `@V1PER86RUS`)
-* **Лицензия:** [MIT License](LICENSE) (2026) — открытый исходный код без ограничений на коммерческое применение.
+* **Автор разработки:** V1PER ([`viper86rus-arch`](https://github.com/viper86rus-arch))
+* **Лицензия:** [MIT License](LICENSE) (2026) — открытый исходный код без ограничений на коммерческое и образовательное применение.
