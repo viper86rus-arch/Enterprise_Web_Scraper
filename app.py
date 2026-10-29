@@ -1,9 +1,15 @@
+#!/usr/bin/env python3
 """
-Enterprise Web Scraper — FastAPI Web Shell
-Веб-оболочка поверх main.py с:
-- Реал-тайм логами через WebSocket
-- Фоновым запуском ScrapingEngine
-- Скачиванием Excel-отчёта
+🌐 Enterprise Web Scraper — FastAPI Web Shell (app.py)
+======================================================
+Интерактивная веб-оболочка над парсинг-движком:
+- Полнофункциональный Web UI Dashboard на FastAPI
+- Реал-тайм стриминг системных логов через WebSockets
+- Неблокирующий фоновый запуск ScrapingEngine
+- Автоматическое скачивание сгенерированных отчетов Excel
+
+Автор: viper86rus-arch (@V1PER86RUS)
+Лицензия: MIT
 """
 
 from __future__ import annotations
@@ -11,20 +17,17 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 from typing import Optional
 
-import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi import Request
 from pydantic import BaseModel
+import uvicorn
 
-# --------------------------------------------------------------------------- #
-# Импорт компонентов движка без запуска CLI                                    #
-# --------------------------------------------------------------------------- #
+# Импорт компонентов движка без запуска CLI
 from main import (
     DatabaseStorage,
     DemoBooksAdapter,
@@ -32,21 +35,29 @@ from main import (
     ProxyManager,
     ScrapingEngine,
 )
+import main as _main_module
+from rich.console import Console
 
-# --------------------------------------------------------------------------- #
-# Глобальное состояние задачи (один скрапер за раз)                            #
-# --------------------------------------------------------------------------- #
+
+# ==============================================================================
+# 1. ГЛОБАЛЬНОЕ СОСТОЯНИЕ ЗАДАЧИ (ОДИН СКРАПЕР ЗА РАЗ)
+# ==============================================================================
+
 class TaskState:
     running: bool = False
     output_file: Optional[str] = None
     log_queue: asyncio.Queue = asyncio.Queue()
 
+
 state = TaskState()
 
-# --------------------------------------------------------------------------- #
-# Перехватчик вывода Rich / print → WebSocket-очередь                          #
-# --------------------------------------------------------------------------- #
+
+# ==============================================================================
+# 2. ПЕРЕХВАТЧИК ВЫВОДА RICH / PRINT В WEBSOCKET-ОЧЕРЕДЬ
+# ==============================================================================
+
 _ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
 
 class WebSocketLogger(io.TextIOBase):
     """Перенаправляет print/stdout в asyncio-очередь для трансляции в WS."""
@@ -72,21 +83,16 @@ class WebSocketLogger(io.TextIOBase):
         pass
 
 
-# --------------------------------------------------------------------------- #
-# Патч Rich Console так, чтобы он тоже слал в очередь                         #
-# --------------------------------------------------------------------------- #
-import main as _main_module
-from rich.console import Console
-
 def _make_ws_console(queue: asyncio.Queue) -> Console:
     """Создаёт Rich Console, который пишет в WebSocketLogger."""
     ws_logger = WebSocketLogger(queue)
     return Console(file=ws_logger, highlight=False, markup=True)
 
 
-# --------------------------------------------------------------------------- #
-# Параметры запуска из веб-формы                                               #
-# --------------------------------------------------------------------------- #
+# ==============================================================================
+# 3. МОДЕЛИ ДАННЫХ И FASTAPI ПРИЛОЖЕНИЕ
+# ==============================================================================
+
 class ScrapeRequest(BaseModel):
     pages: int = 3
     concurrency: int = 3
@@ -94,9 +100,6 @@ class ScrapeRequest(BaseModel):
     db: str = "scraped_data.db"
 
 
-# --------------------------------------------------------------------------- #
-# FastAPI приложение                                                            #
-# --------------------------------------------------------------------------- #
 app = FastAPI(title="Enterprise Web Scraper UI")
 
 _HTML_PATH = Path("templates/index.html")
@@ -147,9 +150,10 @@ async def download_report():
     )
 
 
-# --------------------------------------------------------------------------- #
-# WebSocket: трансляция логов в реальном времени                                #
-# --------------------------------------------------------------------------- #
+# ==============================================================================
+# 4. WEBSOCKET: ТРАНСЛЯЦИЯ ЛОГОВ В РЕАЛЬНОМ ВРЕМЕНИ
+# ==============================================================================
+
 @app.websocket("/ws/logs")
 async def websocket_logs(websocket: WebSocket):
     await websocket.accept()
@@ -172,9 +176,10 @@ async def websocket_logs(websocket: WebSocket):
         pass
 
 
-# --------------------------------------------------------------------------- #
-# Фоновая задача скрапинга                                                     #
-# --------------------------------------------------------------------------- #
+# ==============================================================================
+# 5. АСИНХРОННАЯ ФОНОВАЯ ЗАДАЧА СКРАПИНГА
+# ==============================================================================
+
 async def _run_scrape_task(params: ScrapeRequest) -> None:
     """Выполняет полный цикл скрапинга и пишет логи в state.log_queue."""
     queue = state.log_queue
@@ -183,10 +188,12 @@ async def _run_scrape_task(params: ScrapeRequest) -> None:
         await queue.put(msg)
 
     try:
-        await log(f"Старт задачи | Страниц: {params.pages} | "
-                  f"Параллелизм: {params.concurrency} | Файл: {params.output}")
+        await log(
+            f"Старт задачи | Страниц: {params.pages} | "
+            f"Параллелизм: {params.concurrency} | Файл: {params.output}"
+        )
 
-        # Патчим console в main, чтобы он писал в нашу очередь
+        # Патчим console в main, чтобы он транслировал события в WebSocket
         ws_console = _make_ws_console(queue)
         _main_module.console = ws_console
 
@@ -232,8 +239,9 @@ async def _run_scrape_task(params: ScrapeRequest) -> None:
         await queue.put("__DONE__")
 
 
-# --------------------------------------------------------------------------- #
-# Точка входа                                                                  #
-# --------------------------------------------------------------------------- #
+# ==============================================================================
+# 6. ТОЧКА ВХОДА (MAIN)
+# ==============================================================================
+
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)

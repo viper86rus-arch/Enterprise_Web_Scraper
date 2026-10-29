@@ -1,13 +1,19 @@
+#!/usr/bin/env python3
 """
-Enterprise Async Web Scraper & Catalog Extractor (Full Suite)
-Архитектурный шаблон промышленного парсера:
+🕷️ Enterprise Async Web Scraper & Catalog Extractor (main.py)
+=============================================================
+Промышленная асинхронная платформа для сбора и мониторинга данных:
 - CLI управление флагами запуска (argparse)
-- Неблокирующее сохранение в SQLite (sqlite3 + asyncio.to_thread) с защитой от сбоев
-- Пул ротации прокси (HTTP/SOCKS5)
-- Stealth-эмуляция человека и фильтрация медиа-трафика (Playwright)
-- Строгая схема Pydantic v2
-- Генерация отчетов Excel с авто-стилями (OpenPyXL)
+- Неблокирующее сохранение в SQLite (sqlite3 + asyncio.to_thread) с защитой от дублей
+- Пул циклической ротации прокси (HTTP / SOCKS5)
+- Stealth-эмуляция человека и фильтрация тяжелого медиа-трафика (Playwright)
+- Строгая валидация и очистка полей по схеме Pydantic v2
+- Профессиональная генерация отчетов Excel с авто-стилями и шапками (OpenPyXL)
+
+Автор: viper86rus-arch (@V1PER86RUS)
+Лицензия: MIT
 """
+
 
 from __future__ import annotations
 
