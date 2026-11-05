@@ -1,13 +1,14 @@
-# 🕷️ Enterprise Async Web Scraper & Catalog Platform
+# 🕷️ V1PER IT Solutions | Enterprise Async Web Scraper & Catalog Platform
 
 [![Tests](https://img.shields.io/badge/Tests-7%2F7%20Passed%20(100%25)-success.svg?logo=checkmarx&logoColor=white)](tests/)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Studio](https://img.shields.io/badge/Studio-V1PER_IT_Solutions-emerald.svg)]()
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Playwright](https://img.shields.io/badge/Playwright-Chromium-45ba4b.svg?logo=playwright&logoColor=white)](https://playwright.dev/python/)
 [![WebSockets](https://img.shields.io/badge/WebSockets-Live_Logs-orange.svg)](https://websockets.readthedocs.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](LICENSE)
 
-> **Промышленная платформа для сбора, валидации и мониторинга данных с динамических веб-каталогов.**
+> **Промышленная платформа студии V1PER IT Solutions для сбора, валидации и мониторинга данных с динамических веб-каталогов.**
 > Поддерживает два независимых режима работы: **CLI-ядро** (`main.py`) для автоматизации и скриптов и **Web UI Dashboard** (`app.py`) с интерактивным интерфейсом и реал-тайм стримингом логов через WebSocket.
 
 ---
