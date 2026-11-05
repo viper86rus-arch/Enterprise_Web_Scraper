@@ -23,22 +23,78 @@ import itertools
 import random
 import re
 import sqlite3
+import sys
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.worksheet import Worksheet
-from playwright.async_api import Browser, BrowserContext, Page, Route, async_playwright
-from pydantic import BaseModel, Field, field_validator
-from rich.console import Console
-from rich.table import Table
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.worksheet import Worksheet
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
+    Workbook = None
 
-console = Console()
+try:
+    from playwright.async_api import Browser, BrowserContext, Page, Route, async_playwright
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
+    Browser = BrowserContext = Page = Route = async_playwright = None
+
+try:
+    from pydantic import BaseModel, Field, field_validator
+    HAS_PYDANTIC = True
+except ImportError:
+    HAS_PYDANTIC = False
+
+    def field_validator(field_name, *args, **kwargs):
+        def decorator(fn):
+            target = getattr(fn, "__func__", fn)
+            try:
+                target._target_field = field_name
+            except Exception:
+                pass
+            return fn
+        return decorator
+
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                for attr_name in dir(self.__class__):
+                    bound_attr = getattr(self.__class__, attr_name, None)
+                    underlying = getattr(bound_attr, "__func__", bound_attr)
+                    if callable(bound_attr) and getattr(underlying, "_target_field", None) == k:
+                        try:
+                            v = bound_attr(v)
+                        except Exception:
+                            pass
+                setattr(self, k, v)
+
+        def model_dump(self):
+            return self.__dict__
+
+    def Field(*args, **kwargs):
+        default = kwargs.get("default", None)
+        default_factory = kwargs.get("default_factory", None)
+        return default_factory() if default_factory else default
+
+try:
+    from rich.console import Console
+    from rich.table import Table
+    console = Console()
+except ImportError:
+    class Console:
+        def print(self, *args, **kwargs):
+            clean_args = [re.sub(r"\[.*?\]", "", str(a)) for a in args]
+            print(*clean_args)
+    console = Console()
+    Table = None
 
 # Типы медиа-ресурсов, блокируемых для экономии трафика и ускорения сбора
 _BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font", "stylesheet"})
@@ -529,27 +585,49 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
+
+    missing = []
+    if not HAS_PLAYWRIGHT:
+        missing.append("playwright")
+    if not HAS_PYDANTIC:
+        missing.append("pydantic")
+    if not HAS_OPENPYXL:
+        missing.append("openpyxl")
+    if missing:
+        print("\n" + "=" * 65)
+        print("⚠️  Enterprise Web Scraper: Требуются внешние библиотеки")
+        print("=" * 65)
+        print(f"Не установлены модули: {', '.join(missing)}")
+        print("\nДля установки всех зависимостей выполните:")
+        print("   pip install -r requirements.txt")
+        print("   playwright install chromium\n")
+        print("=" * 65 + "\n")
+        sys.exit(1)
+
     adapter = DemoBooksAdapter()
 
-    table = Table(
-        title="Параметры сессии Enterprise Scraper", border_style="bright_blue"
-    )
-    table.add_column("Параметр", style="cyan")
-    table.add_column("Значение", style="green")
-    table.add_row("Целевой адаптер", adapter.target_name)
-    table.add_row("Количество страниц", str(args.pages))
-    table.add_row("Параллельные вкладки", str(args.concurrency))
-    table.add_row(
-        "Режим отображения",
-        "Headful (С окном)" if args.headful else "Headless (Скрытый)",
-    )
-    table.add_row("Выходной Excel", args.output)
-    table.add_row("SQLite база данных", args.db)
-    table.add_row(
-        "Файл прокси",
-        args.proxies if args.proxies else "Не используется (Прямое подключение)",
-    )
-    console.print(table)
+    if Table is not None:
+        table = Table(
+            title="Параметры сессии Enterprise Scraper", border_style="bright_blue"
+        )
+        table.add_column("Параметр", style="cyan")
+        table.add_column("Значение", style="green")
+        table.add_row("Целевой адаптер", adapter.target_name)
+        table.add_row("Количество страниц", str(args.pages))
+        table.add_row("Параллельные вкладки", str(args.concurrency))
+        table.add_row(
+            "Режим отображения",
+            "Headful (С окном)" if args.headful else "Headless (Скрытый)",
+        )
+        table.add_row("Выходной Excel", args.output)
+        table.add_row("SQLite база данных", args.db)
+        table.add_row(
+            "Файл прокси",
+            args.proxies if args.proxies else "Не используется (Прямое подключение)",
+        )
+        console.print(table)
+    else:
+        console.print(f"[Параметры сессии Scraper] Адаптер: {adapter.target_name} | Страниц: {args.pages} | Параллелизм: {args.concurrency}")
 
     proxy_mgr = ProxyManager.from_file(args.proxies)
     # Пустая строка в --db означает «не использовать БД»
