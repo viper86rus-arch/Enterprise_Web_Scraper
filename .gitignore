@@ -1,4 +1,23 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+env/
+venv/
+.venv/
+
+# Environment credentials (Tier 1 Privacy Protocol)
 .env
+*.local
+
+# Database & Runtime Output
 *.db
+*.sqlite3
+*.log
+*.xlsx
+*.csv
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
