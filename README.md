@@ -20,7 +20,8 @@
 > - 🔄 **Регулярный мониторинг:** отслеживание цен конкурентов, динамики наличия товаров, изменений каталогов поставщиков и госзакупок.
 > - 💾 **Хранение данных:** прямой экспорт в корпоративные базы (PostgreSQL, ClickHouse, S3, ElasticSearch).
 >
-> 📩 **Заказать разработку enterprise-решения:** [Заказать на Kwork (Безопасная сделка)](https://kwork.ru/user/viper86rus-arch) • [Создать заявку (Issue)](https://github.com/viper86rus-arch/Enterprise_Web_Scraper/issues) • [Профиль студии](https://github.com/viper86rus-arch)
+> 📩 **Заказать разработку enterprise-решения:** [Заказать на Kwork (Безопасная сделка)](https://kwork.ru/user/V1PER86RUS) • [Создать заявку (Issue)](https://github.com/viper86rus-arch/Enterprise_Web_Scraper/issues) • [Профиль студии](https://github.com/viper86rus-arch)
+
 
 ---
 
