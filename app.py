@@ -24,11 +24,12 @@ from typing import Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 
 # Импорт компонентов движка без запуска CLI
 from main import (
+    CSVReportExporter,
     DatabaseStorage,
     DemoBooksAdapter,
     ExcelReportExporter,
@@ -90,19 +91,50 @@ def _make_ws_console(queue: asyncio.Queue) -> Console:
 
 
 # ==============================================================================
-# 3. МОДЕЛИ ДАННЫХ И FASTAPI ПРИЛОЖЕНИЕ
+# 3. МОДЕЛИ ДАННЫХ И FASTAPI ПРИЛОЖЕНИЕ (CWE-22 / CWE-770 Hardening)
 # ==============================================================================
 
+BASE_DIR = Path(__file__).resolve().parent
+REPORTS_DIR = (BASE_DIR / "reports").resolve()
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = (BASE_DIR / "data").resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_safe_export_path(filename: str, default_name: str = "catalog_report.xlsx") -> Path:
+    """Обеспечивает изоляцию путей отчетов внутри директории reports (CWE-22)."""
+    clean_name = Path(filename).name if filename else default_name
+    if not clean_name.lower().endswith((".xlsx", ".csv")):
+        clean_name += ".xlsx"
+    target = (REPORTS_DIR / clean_name).resolve()
+    if not target.is_relative_to(REPORTS_DIR):
+        target = REPORTS_DIR / default_name
+    return target
+
+
+def get_safe_db_path(filename: str, default_name: str = "scraped_data.db") -> str:
+    """Обеспечивает изоляцию файлов SQLite базы данных внутри директории data (CWE-22)."""
+    if not filename or not filename.strip():
+        return ""
+    clean_name = Path(filename).name
+    if not clean_name.lower().endswith((".db", ".sqlite", ".sqlite3")):
+        clean_name += ".db"
+    target = (DATA_DIR / clean_name).resolve()
+    if not target.is_relative_to(DATA_DIR):
+        target = DATA_DIR / default_name
+    return str(target)
+
+
 class ScrapeRequest(BaseModel):
-    pages: int = 3
-    concurrency: int = 3
-    output: str = "demo_catalog.xlsx"
-    db: str = "scraped_data.db"
+    pages: int = Field(default=3, ge=1, le=50)
+    concurrency: int = Field(default=3, ge=1, le=10)
+    output: str = Field(default="demo_catalog.xlsx")
+    db: str = Field(default="scraped_data.db")
 
 
 app = FastAPI(title="Enterprise Web Scraper UI")
 
-_HTML_PATH = Path("templates/index.html")
+_HTML_PATH = (BASE_DIR / "templates" / "index.html").resolve()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -141,12 +173,20 @@ async def get_status():
 
 @app.get("/api/download")
 async def download_report():
-    if not state.output_file or not Path(state.output_file).exists():
+    if not state.output_file:
         return {"error": "Файл не найден. Сначала запустите скрапер."}
+    target = Path(state.output_file).resolve()
+    if not target.exists() or not target.is_relative_to(REPORTS_DIR):
+        return {"error": "Доступ запрещен или файл отсутствует (Path Traversal Guard)."}
+    media_type = (
+        "text/csv"
+        if target.suffix.lower() == ".csv"
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
     return FileResponse(
-        path=state.output_file,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=Path(state.output_file).name,
+        path=str(target),
+        media_type=media_type,
+        filename=target.name,
     )
 
 
@@ -188,9 +228,12 @@ async def _run_scrape_task(params: ScrapeRequest) -> None:
         await queue.put(msg)
 
     try:
+        safe_output = get_safe_export_path(params.output)
+        safe_db = get_safe_db_path(params.db)
+
         await log(
             f"Старт задачи | Страниц: {params.pages} | "
-            f"Параллелизм: {params.concurrency} | Файл: {params.output}"
+            f"Параллелизм: {params.concurrency} | Файл: {safe_output.name}"
         )
 
         # Патчим console в main, чтобы он транслировал события в WebSocket
@@ -199,7 +242,7 @@ async def _run_scrape_task(params: ScrapeRequest) -> None:
 
         adapter = DemoBooksAdapter()
         proxy_mgr = ProxyManager()
-        db_storage = DatabaseStorage(params.db) if params.db.strip() else None
+        db_storage = DatabaseStorage(safe_db) if safe_db else None
 
         engine = ScrapingEngine(
             adapter=adapter,
@@ -209,21 +252,25 @@ async def _run_scrape_task(params: ScrapeRequest) -> None:
             db_storage=db_storage,
         )
 
-        await log(f"[БД] SQLite: {params.db or 'отключено'}")
+        await log(f"[БД] SQLite: {safe_db or 'отключено'}")
         await log(f"[СЕТЬ] Целевой адаптер: {adapter.target_name}")
 
         data = await engine.run(total_pages=params.pages)
 
         if data:
-            output_path = params.output
-            result = await asyncio.to_thread(
-                ExcelReportExporter.export, data, output_path
-            )
-            if result:
-                state.output_file = str(result)
-                await log(f"[УСПЕХ] Excel-отчёт готов: {result.name} ({len(data)} записей)")
+            if safe_output.suffix.lower() == ".csv":
+                result = await asyncio.to_thread(
+                    CSVReportExporter.export, data, str(safe_output)
+                )
             else:
-                await log("[ОШИБКА] Не удалось сохранить Excel-файл")
+                result = await asyncio.to_thread(
+                    ExcelReportExporter.export, data, str(safe_output)
+                )
+            if result:
+                state.output_file = str(result.resolve())
+                await log(f"[УСПЕХ] Отчёт готов: {result.name} ({len(data)} записей)")
+            else:
+                await log("[ОШИБКА] Не удалось сохранить файл отчёта")
         else:
             await log("[ПРЕДУПРЕЖДЕНИЕ] Данные не собраны — файл не создан")
 

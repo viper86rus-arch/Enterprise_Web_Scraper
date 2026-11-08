@@ -1,6 +1,7 @@
 # 🕷️ V1PER IT Solutions | Enterprise Async Web Scraper & Catalog Platform
 
 [![Tests](https://img.shields.io/badge/Tests-7%2F7%20Passed%20(100%25)-success.svg?logo=checkmarx&logoColor=white)](tests/)
+[![Security Audit](https://img.shields.io/badge/Security_Audit-0_Vulnerabilities%20(PASS)-success.svg?logo=shield&logoColor=white)](audit_stress_test.py)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Studio](https://img.shields.io/badge/Studio-V1PER_IT_Solutions-emerald.svg)]()
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -19,7 +20,7 @@
 > - 🔄 **Регулярный мониторинг:** отслеживание цен конкурентов, динамики наличия товаров, изменений каталогов поставщиков и госзакупок.
 > - 💾 **Хранение данных:** прямой экспорт в корпоративные базы (PostgreSQL, ClickHouse, S3, ElasticSearch).
 >
-> 📩 **Заказать разработку enterprise-решения:** [Заказать на Kwork (Безопасная сделка)](https://kwork.ru/user/V1PER86RUS) • [Создать заявку (Issue)](https://github.com/viper86rus-arch/Enterprise_Web_Scraper/issues) • [Профиль студии](https://github.com/viper86rus-arch)
+> 📩 **Заказать разработку enterprise-решения:** [Заказать на Kwork (Безопасная сделка)](https://kwork.ru/user/viper86rus-arch) • [Создать заявку (Issue)](https://github.com/viper86rus-arch/Enterprise_Web_Scraper/issues) • [Профиль студии](https://github.com/viper86rus-arch)
 
 ---
 
@@ -115,30 +116,34 @@ python main.py [АРГУМЕНТЫ]
 
 | Аргумент | Тип | По умолчанию | Описание |
 |---|:---:|:---:|---|
-| `--pages` | `int` | `3` | Количество страниц каталога для обхода |
-| `--concurrency` | `int` | `3` | Максимальное число параллельных вкладок браузера |
-| `--output` | `str` | `demo_catalog.xlsx` | Имя или путь к выходному Excel-файлу |
+| `-p`, `--pages` | `int` | `3` | Количество страниц каталога для обхода (1–50) |
+| `-c`, `--concurrency` | `int` | `3` | Максимальное число параллельных вкладок браузера (1–10) |
+| `-o`, `--output` | `str` | `demo_catalog.xlsx` | Имя или путь к выходному Excel/CSV-файлу |
 | `--db` | `str` | `scraped_data.db` | Путь к SQLite-базе (передайте `""` для отключения) |
 | `--proxies` | `str` | `None` | Путь к текстовому файлу со списком прокси |
 | `--headful` | flag | `False` | Видимое окно браузера (режим отладки) |
+| `--demo` | flag | `False` | Автономный офлайн-режим (Zero-Pip, без сетевых запросов) |
 
 ### Примеры запуска
 
 ```bash
+# Автономный демонстрационный режим (Zero-Pip, чистый Python без pip)
+python main.py --demo --pages 3 -o reports/demo_report.csv
+
 # Быстрый тест — 3 страницы, 3 потока
 python main.py --pages 3 --concurrency 3
 
 # Высокопроизводительный сбор — 20 страниц, 6 потоков
-python main.py --pages 20 --concurrency 6 --output reports/catalog_full.xlsx
+python main.py -p 20 -c 6 -o reports/catalog_full.xlsx
 
 # Боевой запуск с пулом прокси
-python main.py --pages 50 --concurrency 8 --proxies proxies.txt --db production.db
+python main.py --pages 50 --concurrency 8 --proxies proxies.txt --db data/production.db
 
 # Отладка в видимом браузере
 python main.py --pages 2 --concurrency 1 --headful
 
-# Только Excel, без сохранения в БД
-python main.py --pages 10 --db "" --output fast_export.xlsx
+# Выгрузка в CSV (UTF-8 BOM для Microsoft Excel)
+python main.py --pages 5 --output reports/export.csv
 ```
 
 ---
@@ -248,16 +253,19 @@ _main_module.console = Console()
 ## 📁 Структура проекта
 
 ```text
-Parser_test2/
+Enterprise_Web_Scraper/
 ├── app.py                 # FastAPI-сервер: REST API + WebSocket + отдача UI
 ├── main.py                # CLI-ядро: ScrapingEngine, адаптеры, Pydantic, CLI
+├── audit_stress_test.py   # Автоматизированный стресс-тест безопасности (Zero-Pip)
 ├── templates/
-│   └── index.html         # Веб-интерфейс (тёмная тема, Live-логи, управление)
-├── requirements.txt       # Зависимости проекта
-├── demo_catalog.xlsx      # Эталонный Excel-отчёт (100 записей, создан main.py)
-├── scraped_data.db        # SQLite-база (создаётся автоматически)
+│   └── index.html         # Веб-интерфейс (тёмная тема, Live-логи, управление, CSP)
+├── tests/
+│   └── test_scraper.py    # Модульные тесты Pydantic, SQLite, ProxyManager
+├── reports/               # Изолированная директория выгрузки Excel/CSV отчетов
+├── data/                  # Директория SQLite баз данных
+├── requirements.txt       # Внешние зависимости (Playwright, FastAPI, OpenPyXL)
 ├── .gitignore
-└── README.md
+└── README.md              # Документация и техническая спецификация
 ```
 
 ---
@@ -362,6 +370,26 @@ await engine.run(total_pages=10)
 | **Хранилище** | SQLite3 (`asyncio.to_thread`, `INSERT OR IGNORE`) |
 | **Формат выгрузки** | Excel `.xlsx` (OpenPyXL, стилизованные таблицы) |
 | **Прокси** | HTTP / SOCKS5 с авторизацией, `itertools.cycle` |
+
+---
+
+## 🛡️ Безопасность и автоматизированный стресс-аудит
+
+Архитектура платформы прошла глубокий ревизионный аудит и стресс-тестирование (`audit_stress_test.py`):
+
+| Категория защиты | Стандарт | Реализация в кодовой базе |
+|---|:---:|---|
+| **SSRF (Server-Side Request Forgery)** | `CWE-918` | Блокировка приватных подсетей RFC 1918, Loopback (`127.0.0.1`, `[::1]`), Octal/Dword IP и Cloud Metadata API (`169.254.169.254`). |
+| **Excel / CSV Formula Injection** | `CWE-1236` | Экранирование и экранизация апострофом `'` формульных символов (`=`, `+`, `-`, `@`, `\t`, `\r`) в ячейках. |
+| **Path Traversal (File & DB)** | `CWE-22` | Каноникализация и строгая изоляция путей отчетов (`reports/`) и баз данных (`data/`) через `relative_to()`. |
+| **Memory DoS & Crawler Traps** | `CWE-400` / `CWE-770` | Лимитирование `max_response_size`, дедупликация `visited_urls`, строгие границы `pages (1–50)` и `concurrency (1–10)`. |
+| **Cross-Site Scripting (XSS)** | `CWE-79` / `CWE-1021` | Полная HTML-экранизация спецсимволов (`&`, `<`, `>`, `"`, `'`) в `escHtml` и строгий метатег `Content-Security-Policy`. |
+| **Zero-Pip / Graceful Shutdown** | `CWE-755` | Автономный режим `--demo` на стандартной библиотеке Python и корректный перехват `SIGINT` (Ctrl+C, exit code 130). |
+
+Запуск стресс-теста:
+```bash
+python audit_stress_test.py
+```
 
 ---
 

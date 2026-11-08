@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
+import ipaddress
 import itertools
 import random
 import re
+import socket
 import sqlite3
 import sys
 import time
@@ -29,6 +32,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 try:
     from openpyxl import Workbook
@@ -70,10 +74,7 @@ except ImportError:
                     bound_attr = getattr(self.__class__, attr_name, None)
                     underlying = getattr(bound_attr, "__func__", bound_attr)
                     if callable(bound_attr) and getattr(underlying, "_target_field", None) == k:
-                        try:
-                            v = bound_attr(v)
-                        except Exception:
-                            pass
+                        v = bound_attr(v)
                 setattr(self, k, v)
 
         def model_dump(self):
@@ -98,6 +99,89 @@ except ImportError:
 
 # Типы медиа-ресурсов, блокируемых для экономии трафика и ускорения сбора
 _BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font", "stylesheet"})
+
+# Черный список хостов и адресов для защиты от SSRF (CWE-918)
+_BLOCKED_HOSTNAMES = frozenset({
+    "localhost",
+    "metadata.google.internal",
+    "instance-data",
+    "169.254.169.254",
+    "0.0.0.0",
+    "127.0.0.1",
+    "[::1]",
+    "::1",
+})
+
+
+def is_safe_public_url(url: str, allow_private: bool = False) -> bool:
+    """
+    Строгая валидация URL против SSRF (Server-Side Request Forgery, CWE-918).
+    Блокирует file://, gopher://, loopback, link-local, private RFC 1918 и Cloud Metadata IP.
+    """
+    if not isinstance(url, str):
+        return False
+    cleaned = url.strip()
+    try:
+        parsed = urlparse(cleaned)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        host_lower = hostname.lower()
+        if host_lower in _BLOCKED_HOSTNAMES:
+            return False
+
+        # Защита от loopback префиксов и приватных подсетей RFC 1918 по строке
+        if (
+            host_lower.startswith((
+                "127.", "10.", "192.168.", "172.16.", "172.17.", "172.18.",
+                "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+                "172.24.", "172.25.", "172.26.", "172.27.", "172.28.",
+                "172.29.", "172.30.", "172.31.", "169.254.", "0."
+            ))
+            or host_lower in ("localhost", "0.0.0.0", "::1", "[::1]")
+        ):
+            return False
+
+        # Проверка альтернативных представлений IP (octal/dword)
+        parts = host_lower.split(".")
+        if all(p.isdigit() for p in parts) and len(parts) in (1, 4):
+            try:
+                if len(parts) == 1:
+                    ip_val = int(parts[0])
+                    ip_obj = ipaddress.IPv4Address(ip_val)
+                    if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                        return False
+                elif len(parts) == 4 and any(p.startswith("0") and len(p) > 1 for p in parts):
+                    octal_val = tuple(int(p, 8) if p.startswith("0") else int(p) for p in parts)
+                    ip_obj = ipaddress.IPv4Address(f"{octal_val[0]}.{octal_val[1]}.{octal_val[2]}.{octal_val[3]}")
+                    if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                        return False
+            except Exception:
+                return False
+
+        # Проверка DNS резолвинга (если сеть доступна)
+        if not allow_private:
+            try:
+                addr_infos = socket.getaddrinfo(hostname, None)
+                for _, _, _, _, sockaddr in addr_infos:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    if (
+                        ip.is_private
+                        or ip.is_loopback
+                        or ip.is_link_local
+                        or ip.is_multicast
+                        or ip.is_reserved
+                        or ip.is_unspecified
+                        or str(ip) == "169.254.169.254"
+                    ):
+                        return False
+            except (socket.gaierror, ValueError, OSError):
+                pass
+        return True
+    except Exception:
+        return False
 
 
 # ==============================================================================
@@ -142,7 +226,9 @@ class ProductItem(BaseModel):
     def validate_url(cls, v: str) -> str:
         cleaned = v.strip()
         if not cleaned.startswith(("http://", "https://")):
-            raise ValueError(f"Некорректный формат URL: {cleaned}")
+            raise ValueError(f"Недопустимая схема URL (разрешены только http/https): {cleaned}")
+        if not is_safe_public_url(cleaned):
+            raise ValueError(f"Заблокирован приватный/loopback хост (SSRF Guard): {cleaned}")
         return cleaned
 
 
@@ -200,6 +286,9 @@ class DatabaseStorage:
         self.db_path = db_path
 
     def _init_db_sync(self) -> None:
+        db_path = Path(self.db_path)
+        if db_path.parent:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
@@ -337,12 +426,17 @@ class ScrapingEngine:
         headless: bool = True,
         proxy_manager: Optional[ProxyManager] = None,
         db_storage: Optional[DatabaseStorage] = None,
+        max_response_size: int = 15 * 1024 * 1024,
+        max_redirects: int = 5,
     ) -> None:
         self.adapter = adapter
         self.semaphore = asyncio.Semaphore(max_concurrency)
         self.headless = headless
         self.proxy_manager = proxy_manager or ProxyManager()
         self.db = db_storage
+        self.max_response_size = max_response_size
+        self.max_redirects = max_redirects
+        self.visited_urls: set[str] = set()
         self.collected_items: List[ProductItem] = []
 
     async def _setup_stealth_context(self, browser: Browser) -> BrowserContext:
@@ -388,6 +482,15 @@ class ScrapingEngine:
     async def scrape_page(self, context: BrowserContext, page_num: int) -> None:
         async with self.semaphore:
             target_url = await self.adapter.build_catalog_url(page_num)
+            if not is_safe_public_url(target_url):
+                console.print(f"[bold red][SSRF BLOCKED][/bold red] Заблокирован небезопасный URL: {target_url}")
+                return
+
+            if target_url in self.visited_urls:
+                console.print(f"[yellow][КРАУЛЕР][/yellow] Пропуск уже посещенного URL (защита от циклов): {target_url}")
+                return
+            self.visited_urls.add(target_url)
+
             page = await context.new_page()
 
             try:
@@ -400,6 +503,14 @@ class ScrapingEngine:
                     status_code = response.status if response else "ERR"
                     console.print(
                         f"[bold red][ОШИБКА][/bold red] HTTP {status_code} на стр. {page_num}"
+                    )
+                    return
+
+                # Проверка лимита размера ответа (защита от Memory DoS / Decompression Bomb)
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > self.max_response_size:
+                    console.print(
+                        f"[bold red][DOS BLOCKED][/bold red] Превышен max_response_size: {content_length} байт"
                     )
                     return
 
@@ -500,16 +611,23 @@ class ExcelReportExporter:
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
+        def _shield_cell(value: Any) -> Any:
+            """Нейтрализует CSV/Excel Formula Injection (CWE-1236)."""
+            if isinstance(value, str):
+                if value.strip().startswith(("=", "+", "-", "@", "\t", "\r")):
+                    return f"'{value}"
+            return value
+
         for row_idx, item in enumerate(items, start=2):
             ws.append(
                 [
-                    item.sku,
-                    item.title,
-                    item.category,
+                    _shield_cell(item.sku),
+                    _shield_cell(item.title),
+                    _shield_cell(item.category),
                     item.price,
                     "В наличии" if item.in_stock else "Под заказ",
                     item.scraped_at,
-                    item.url,
+                    _shield_cell(item.url),
                 ]
             )
             ws.cell(row=row_idx, column=4).number_format = "#,##0.00"
@@ -527,6 +645,7 @@ class ExcelReportExporter:
 
         target = Path(output_filepath)
         try:
+            target.parent.mkdir(parents=True, exist_ok=True)
             wb.save(target)
             console.print(
                 f"[bold cyan][ЭКСПОРТ EXCEL][/bold cyan] Файл сохранен: {target.resolve()}"
@@ -539,6 +658,100 @@ class ExcelReportExporter:
         return target
 
 
+class CSVReportExporter:
+    """Экспортер в CSV (Standard Library, Zero-Pip) с кодировкой UTF-8 BOM для Microsoft Excel."""
+
+    @staticmethod
+    def export(
+        items: List[ProductItem], output_filepath: str = "catalog_report.csv"
+    ) -> Optional[Path]:
+        def _shield_cell(value: Any) -> Any:
+            if isinstance(value, str):
+                s = value.strip()
+                if s.startswith(("=", "+", "-", "@", "\t", "\r")):
+                    return f"'{value}"
+            return value
+
+        target = Path(output_filepath)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f, delimiter=";")
+                writer.writerow(
+                    [
+                        "Артикул (SKU)",
+                        "Наименование",
+                        "Категория",
+                        "Цена (RUB)",
+                        "Наличие",
+                        "Дата фиксации",
+                        "URL",
+                    ]
+                )
+                for item in items:
+                    writer.writerow(
+                        [
+                            _shield_cell(item.sku),
+                            _shield_cell(item.title),
+                            _shield_cell(item.category),
+                            f"{item.price:.2f}",
+                            "В наличии" if item.in_stock else "Под заказ",
+                            item.scraped_at,
+                            _shield_cell(item.url),
+                        ]
+                    )
+            console.print(
+                f"[bold cyan][ЭКСПОРТ CSV][/bold cyan] Файл сохранен: {target.resolve()}"
+            )
+            return target
+        except OSError as exc:
+            console.print(
+                f"[bold red][ОШИБКА ЭКСПОРТА][/bold red] Не удалось сохранить CSV файл: {exc}"
+            )
+            return None
+
+
+def generate_demo_catalog(pages: int = 3, items_per_page: int = 5) -> List[ProductItem]:
+    """Генерирует синтетический каталог товаров для офлайн/демо режима (Zero-Pip)."""
+    demo_titles = [
+        ("Clean Architecture: A Craftsman's Guide to Software Structure", "Engineering", 3800.0, True),
+        ("Designing Data-Intensive Applications", "Distributed Systems", 4500.0, True),
+        ("Fluent Python: Clear, Concise, and Effective Programming", "Python", 3950.0, True),
+        ("Site Reliability Engineering: How Google Runs Production Systems", "DevOps", 3200.0, True),
+        ("Building Microservices: Designing Fine-Grained Systems", "Architecture", 3600.0, True),
+        ("Database Internals: A Deep Dive into How Distributed Systems Work", "Databases", 4100.0, False),
+        ("Refactoring: Improving the Design of Existing Code", "Refactoring", 3400.0, True),
+        ("Release It!: Design and Deploy Production-Ready Software", "Reliability", 2900.0, True),
+        ("Domain-Driven Design: Tackling Complexity in the Heart of Software", "Architecture", 4800.0, True),
+        ("Operating Systems: Three Easy Pieces", "Systems", 2700.0, True),
+    ]
+    items: List[ProductItem] = []
+    idx = 1
+    for page in range(1, pages + 1):
+        for item_idx in range(items_per_page):
+            sample = demo_titles[(idx - 1) % len(demo_titles)]
+            sku = f"BOOK-DEMO-{idx:04d}"
+            title = f"{sample[0]} (Vol. {page})" if page > 1 else sample[0]
+            price = sample[2] + (page - 1) * 150.0
+            category = sample[1]
+            in_stock = sample[3]
+            url = f"https://books.toscrape.com/catalogue/demo-item-{idx}/index.html"
+            items.append(
+                ProductItem(
+                    sku=sku,
+                    title=title,
+                    category=category,
+                    price=price,
+                    old_price=price * 1.15,
+                    in_stock=in_stock,
+                    url=url,
+                    scraped_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+            )
+            idx += 1
+    return items
+
+
 # ==============================================================================
 # 7. CLI ТОЧКА ВХОДА (Аргументы командной строки)
 # ==============================================================================
@@ -549,19 +762,21 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--pages", type=int, default=3, help="Количество страниц каталога для сбора"
+        "-p", "--pages", type=int, default=3, help="Количество страниц каталога для сбора"
     )
     parser.add_argument(
+        "-c",
         "--concurrency",
         type=int,
         default=3,
         help="Параллелизм (максимум одновременных вкладок)",
     )
     parser.add_argument(
+        "-o",
         "--output",
         type=str,
         default="demo_catalog.xlsx",
-        help="Имя выходного Excel файла",
+        help="Имя выходного Excel/CSV файла",
     )
     parser.add_argument(
         "--db",
@@ -580,11 +795,36 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Запуск с видимым окном браузера (для отладки)",
     )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Автономный демонстрационный режим (Zero-Pip, без внешних запросов к сети)",
+    )
     return parser.parse_args()
 
 
 async def main() -> None:
     args = parse_args()
+
+    # Офлайн демонстрационный режим (Zero-Pip)
+    if args.demo:
+        console.print("[bold yellow]>>> Запуск в автономном DEMO-режиме (Zero-Pip)...[/bold yellow]")
+        demo_items = generate_demo_catalog(pages=args.pages)
+        if args.db and args.db.strip():
+            db_storage = DatabaseStorage(args.db)
+            await db_storage.init_db()
+            inserted = await db_storage.save_items(demo_items)
+            console.print(f"[dim cyan][БД][/dim cyan] Сохранено демо-записей: {inserted}")
+
+        output_path = Path(args.output)
+        if output_path.suffix.lower() == ".csv" or not HAS_OPENPYXL:
+            CSVReportExporter.export(demo_items, str(output_path))
+        else:
+            ExcelReportExporter.export(demo_items, str(output_path))
+        console.print(
+            f"[bold green]>>> Демо-сессия успешно завершена. Сгенерировано позиций: {len(demo_items)}[/bold green]\n"
+        )
+        return
 
     missing = []
     if not HAS_PLAYWRIGHT:
@@ -598,7 +838,9 @@ async def main() -> None:
         print("⚠️  Enterprise Web Scraper: Требуются внешние библиотеки")
         print("=" * 65)
         print(f"Не установлены модули: {', '.join(missing)}")
-        print("\nДля установки всех зависимостей выполните:")
+        print("\nДля запуска в автономном режиме без pip используйте:")
+        print("   python main.py --demo\n")
+        print("Для установки всех зависимостей выполните:")
         print("   pip install -r requirements.txt")
         print("   playwright install chromium\n")
         print("=" * 65 + "\n")
@@ -643,8 +885,15 @@ async def main() -> None:
 
     data = await engine.run(total_pages=args.pages)
     if data:
-        ExcelReportExporter.export(data, args.output)
+        if Path(args.output).suffix.lower() == ".csv":
+            CSVReportExporter.export(data, args.output)
+        else:
+            ExcelReportExporter.export(data, args.output)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n[!] Сессия прервана пользователем (SIGINT / Ctrl+C). Завершение работы...")
+        sys.exit(130)
